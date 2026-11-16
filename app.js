@@ -129,29 +129,27 @@
     return (l.name || '이름 없는 매물') + (l.dongHo ? ' ' + l.dongHo : '');
   }
 
-  /** "2026-11-20T14:00" → "11-20 14:00" */
-  function shortDateTime(v) {
-    return String(v || '').replace('T', ' ').slice(5, 16);
-  }
-
   /**
    * 임장 예정 일시를 오늘 기준으로 풀어 씁니다.
-   * 반환: { text: '내일 14:00', when: '11/20(금) 14:00', level: 'past' | 'today' | 'soon' | 'later' | 'none' }
+   * 반환: { text: '내일 14:00', head: '내일', time: '14:00', when: '11/20(금) 14:00',
+   *         level: 'past' | 'today' | 'soon' | 'later' | 'none' }
    */
   function planInfo(v) {
     var m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
-    if (!m) return { text: '일시 미정', when: '', level: 'none' };
+    if (!m) return { text: '일시 미정', head: '미정', time: '', when: '', level: 'none' };
     var day = new Date(+m[1], +m[2] - 1, +m[3]);
     var at = new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 23), +(m[5] || 59));
     var now = new Date();
     var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     var diff = Math.round((day - today) / 86400000);
-    var time = m[4] ? ' ' + m[4] + ':' + m[5] : '';
+    var hm = m[4] ? m[4] + ':' + m[5] : '';
+    var time = hm ? ' ' + hm : '';
     var when = +m[2] + '/' + +m[3] + '(' + '일월화수목금토'.charAt(day.getDay()) + ')' + time;
-    if (at < now) return { text: diff === 0 ? '오늘' + time + ' 지남' : -diff + '일 지남', when: when, level: 'past' };
-    if (diff === 0) return { text: '오늘' + time, when: when, level: 'today' };
-    if (diff === 1) return { text: '내일' + time, when: when, level: 'soon' };
-    return { text: 'D-' + diff, when: when, level: diff <= 3 ? 'soon' : 'later' };
+    var info = function (text, head, level) { return { text: text, head: head, time: hm, when: when, level: level }; };
+    if (at < now) return diff === 0 ? info('오늘' + time + ' 지남', '지남', 'past') : info(-diff + '일 지남', -diff + '일 지남', 'past');
+    if (diff === 0) return info('오늘' + time, '오늘', 'today');
+    if (diff === 1) return info('내일' + time, '내일', 'soon');
+    return info('D-' + diff, 'D-' + diff, diff <= 3 ? 'soon' : 'later');
   }
 
   /** 상태가 '임장예정'인 매물을 가까운 일정부터. 일시 미정은 맨 뒤 */
@@ -165,11 +163,6 @@
     var d = new Date();
     d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
     return d.toISOString().slice(0, 16);
-  }
-
-  function stars(v) {
-    var n = Number(v);
-    return n ? '★' + (Math.round(n * 10) / 10) : '';
   }
 
   function byId(list, id) {
@@ -447,7 +440,7 @@
   /** 안쪽 화면의 윗줄: 뒤로 가기 + 제목 + (오른쪽 버튼) */
   function header(title, backHref, right) {
     return '<div class="topbar"><a class="iconbtn" href="' + backHref + '" aria-label="뒤로">' + icon('back') + '</a>' +
-      '<h1>' + esc(title) + '</h1>' + (right || '') + '</div>';
+      (title ? '<h1>' + esc(title) + '</h1>' : '<span class="grow"></span>') + (right || '') + '</div>';
   }
 
   /** 큰 화면(매물·임장·중개사·설정)의 제목 */
@@ -678,10 +671,9 @@
     var goRows = planned.map(function (l) {
       var pi = planInfo(l.visitPlan);
       var ag = agentOf(l);
-      var parts = pi.text.split(' ');
       return '<a class="card agendarow" href="#view/' + esc(l.id) + '">' +
-        '<span class="when p-' + pi.level + '"><b>' + esc(pi.level === 'none' ? '미정' : parts[0] + (pi.level === 'past' ? ' ' + (parts[1] || '') : '')) + '</b>' +
-        (pi.level !== 'none' && pi.level !== 'past' && parts[1] ? '<small>' + esc(parts[1]) + '</small>' : '') + '</span>' +
+        '<span class="when p-' + pi.level + '"><b>' + esc(pi.head) + '</b>' +
+        (pi.time && pi.head.indexOf('일 지남') < 0 ? '<small>' + esc(pi.time) + '</small>' : '') + '</span>' +
         '<span class="what"><b>' + esc(titleOf(l)) + '</b>' +
         '<small>' + esc([regionOf(l), priceText(l)].filter(Boolean).join(' · ')) + '</small>' +
         '<small>' + esc([pi.when || '일시를 정해 주세요', ag && ag.name].filter(Boolean).join(' · ')) + '</small></span></a>';
@@ -737,7 +729,7 @@
     var planCard = '';
     if (status === '임장예정') {
       var pi = planInfo(l.visitPlan);
-      planCard = '<div class="card"><h2>임장 일시' + (pi.level !== 'none' ? ' <span class="plantext p-' + pi.level + '">' + esc(pi.text) + '</span>' : '') + '</h2>' +
+      planCard = '<div class="card"><h2>임장 일시 <span id="plantext" class="plantext p-' + pi.level + '">' + esc(pi.level === 'none' ? '' : pi.text) + '</span></h2>' +
         '<input type="datetime-local" id="plan" aria-label="임장 일시" value="' + esc(l.visitPlan || '') + '">' +
         (pi.level === 'none' ? '<p class="hint">언제 가는지 적어 두면 임장 탭에 날짜순으로 모여요.</p>' : '') + '</div>';
     }
@@ -802,8 +794,15 @@
     if (planInput) {
       planInput.addEventListener('change', function () {
         // 중개사를 함께 보내야 매물과의 연결이 끊기지 않습니다.
-        api('saveListing', { listing: { id: id, visitPlan: planInput.value }, agent: agent ? Object.assign({}, agent) : {} })
-          .then(loadData).then(function () { renderView(id); toast('임장 일시를 저장했어요.'); }).catch(handleError);
+        var value = planInput.value;
+        api('saveListing', { listing: { id: id, visitPlan: value }, agent: agent ? Object.assign({}, agent) : {} }).then(function () {
+          // 입력 중인 칸을 다시 그리지 않고 옆 글자만 바꿉니다.
+          l.visitPlan = value;
+          var info = planInfo(value);
+          var label = document.getElementById('plantext');
+          if (label) { label.className = 'plantext p-' + info.level; label.textContent = info.level === 'none' ? '' : info.text; }
+          toast(value ? '임장 일시를 저장했어요.' : '임장 일시를 지웠어요.');
+        }).catch(handleError);
       });
     }
   }
@@ -991,7 +990,7 @@
       var btn = form.querySelector('button[type=submit]');
       btn.disabled = true;
       api('saveVisit', { visit: visit }).then(loadData).then(function () {
-        toast('임장 기록을 저장했습니다.');
+        toast('임장 기록을 저장했어요.');
         location.hash = back;
       }).catch(function (err) { btn.disabled = false; handleError(err); });
     });
@@ -1000,7 +999,7 @@
       document.getElementById('delete').addEventListener('click', function () {
         if (!confirm('이 임장 기록을 삭제할까요? 되돌릴 수 없습니다.')) return;
         api('deleteVisit', { id: existing.id }).then(loadData).then(function () {
-          toast('삭제했습니다.');
+          toast('삭제했어요.');
           location.hash = back;
         }).catch(handleError);
       });
@@ -1068,7 +1067,6 @@
       '</div>';
 
     var form = document.getElementById('agent');
-    bindSegs(form);
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       var data = readForm(form).g;
@@ -1076,7 +1074,7 @@
       var btn = form.querySelector('button[type=submit]');
       btn.disabled = true;
       api('saveAgent', { agent: data }).then(loadData).then(function () {
-        toast('저장했습니다.');
+        toast('저장했어요.');
         location.hash = 'agents';
       }).catch(function (err) { btn.disabled = false; handleError(err); });
     });
@@ -1123,7 +1121,8 @@
       e.preventDefault();
       var name = regionForm.region.value.trim();
       if (!name) return;
-      if (state.settings.regions.indexOf(name) >= 0) { toast('이미 있는 지역입니다.'); return; }
+      if (name === '전체') { toast("'전체'는 지역 이름으로 쓸 수 없어요."); return; }
+      if (state.settings.regions.indexOf(name) >= 0) { toast('이미 있는 지역이에요.'); return; }
       saveRegions(state.settings.regions.concat([name]), name + ' 지역을 추가했습니다.');
     });
     regionForm.querySelectorAll('[data-region]').forEach(function (chip) {
@@ -1146,7 +1145,7 @@
         state.session.password = next;
         saveSession(state.session, remembered);
         form.reset();
-        toast('비밀번호를 바꿨습니다.');
+        toast('비밀번호를 바꿨어요.');
       }).catch(handleError);
     });
   }
@@ -1199,7 +1198,7 @@
       btn.disabled = true;
       api('saveSettings', { settings: { hidden: hidden, regions: state.settings.regions } }).then(function (saved) {
         state.settings.hidden = (saved && saved.hidden) || hidden;
-        toast('입력 항목을 저장했습니다.');
+        toast('입력 항목을 저장했어요.');
         location.hash = 'settings';
       }).catch(function (err) { btn.disabled = false; handleError(err); });
     });
