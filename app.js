@@ -134,6 +134,33 @@
     return String(v || '').replace('T', ' ').slice(5, 16);
   }
 
+  /**
+   * 임장 예정 일시를 오늘 기준으로 풀어 씁니다.
+   * 반환: { text: '내일 14:00', when: '11/20(금) 14:00', level: 'past' | 'today' | 'soon' | 'later' | 'none' }
+   */
+  function planInfo(v) {
+    var m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+    if (!m) return { text: '일시 미정', when: '', level: 'none' };
+    var day = new Date(+m[1], +m[2] - 1, +m[3]);
+    var at = new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 23), +(m[5] || 59));
+    var now = new Date();
+    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var diff = Math.round((day - today) / 86400000);
+    var time = m[4] ? ' ' + m[4] + ':' + m[5] : '';
+    var when = +m[2] + '/' + +m[3] + '(' + '일월화수목금토'.charAt(day.getDay()) + ')' + time;
+    if (at < now) return { text: diff === 0 ? '오늘' + time + ' 지남' : -diff + '일 지남', when: when, level: 'past' };
+    if (diff === 0) return { text: '오늘' + time, when: when, level: 'today' };
+    if (diff === 1) return { text: '내일' + time, when: when, level: 'soon' };
+    return { text: 'D-' + diff, when: when, level: diff <= 3 ? 'soon' : 'later' };
+  }
+
+  /** 상태가 '임장예정'인 매물을 가까운 일정부터. 일시 미정은 맨 뒤 */
+  function plannedListings() {
+    return state.listings.filter(function (l) { return l.status === '임장예정'; }).sort(function (a, b) {
+      return String(a.visitPlan || '9').localeCompare(String(b.visitPlan || '9'));
+    });
+  }
+
   function nowLocal() {
     var d = new Date();
     d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
@@ -501,13 +528,17 @@
       if (visits.length) {
         var bad = badItems(visits);
         visitLine = ['임장 ' + visits.length + '회', stars(avgRating(visits)), bad.length ? '주의: ' + bad.join(', ') : ''].filter(Boolean).join(' · ');
-      } else if (l.visitPlan && status === '임장예정') {
-        visitLine = '임장 예정 ' + shortDateTime(l.visitPlan);
+      }
+      var planLine = '';
+      if (status === '임장예정') {
+        var pi = planInfo(l.visitPlan);
+        planLine = '<div class="plan p-' + pi.level + '"><b>임장 ' + esc(pi.text) + '</b>' + (pi.when ? ' ' + esc(pi.when) : ' · 날짜를 정하세요') + '</div>';
       }
       var foot = [agent && agent.name, l.author, l.createdAt && String(l.createdAt).slice(5, 10)].filter(Boolean).join(' · ');
-      return '<a class="card item" href="#edit/' + esc(l.id) + '">' +
+      return '<a class="card item' + (planLine ? ' planned' : '') + '" href="#edit/' + esc(l.id) + '">' +
         '<div class="row"><span class="name">' + esc(titleOf(l)) + '</span>' +
         '<span class="badge s-' + esc(status) + '">' + esc(status) + '</span></div>' +
+        planLine +
         '<div class="price">' + esc(priceText(l)) + '</div>' +
         (spec ? '<div class="meta">' + esc(spec) + '</div>' : '') +
         (visitLine ? '<div class="meta visit">' + esc(visitLine) + '</div>' : '') +
@@ -527,6 +558,18 @@
         byRegion[r].map(cardHtml).join('');
     }).join('');
 
+    // 임장 예정: 필터와 상관없이 맨 위에 항상 보여줍니다.
+    var planned = plannedListings();
+    var agenda = !planned.length ? '' :
+      '<div class="card agenda"><h2>임장 예정 ' + planned.length + '건</h2>' + planned.map(function (l) {
+        var pi = planInfo(l.visitPlan);
+        var ag = agentOf(l);
+        return '<a class="agendarow p-' + pi.level + '" href="#edit/' + esc(l.id) + '">' +
+          '<span class="when"><b>' + esc(pi.text) + '</b>' + (pi.when ? '<small>' + esc(pi.when) + '</small>' : '<small>날짜를 정하세요</small>') + '</span>' +
+          '<span class="what"><b>' + esc(titleOf(l)) + '</b><small>' +
+          esc([regionOf(l), priceText(l), ag && ag.name].filter(Boolean).join(' · ')) + '</small></span></a>';
+      }).join('') + '</div>';
+
     var sortOptions = [['recent', '최근 등록순'], ['cheap', '보증금 낮은순'], ['pricey', '보증금 높은순'], ['wide', '면적 넓은순'], ['rating', '별점 높은순'], ['plan', '임장 예정 빠른순']]
       .map(function (o) { return '<option value="' + o[0] + '"' + (state.sort === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
 
@@ -534,7 +577,7 @@
       '<div class="topbar"><h1>전세 임장 노트</h1>' +
       '<a class="btn" href="#settings">설정</a><a class="btn" href="#agents">중개사</a><a class="btn primary" href="#new">+ 매물</a></div>' +
       (DEMO ? '<div class="banner">체험 모드: 이 브라우저에만 저장됩니다.</div>' : '') +
-      regionChips + '<div class="chips">' + chips + '</div>' +
+      agenda + regionChips + '<div class="chips">' + chips + '</div>' +
       '<div class="toolbar"><span>' + list.length + '건</span><select id="sort" aria-label="정렬">' + sortOptions + '</select></div>' +
       (cards || '<div class="empty">' + (state.listings.length ? '조건에 맞는 매물이 없습니다.' : '아직 매물이 없습니다.<br>[+ 매물]을 눌러 네이버 부동산 내용을 붙여넣어 보세요.') + '</div>');
 
@@ -688,7 +731,13 @@
           api('setStatus', { id: existing.id, status: next }).then(function () {
             existing.status = next;
             chipBox.querySelectorAll('.chip').forEach(function (c) { c.classList.toggle('on', c === chip); });
-            toast('상태: ' + next);
+            var planInput = form.elements['l.visitPlan'];
+            if (next === '임장예정' && planInput && !planInput.value) {
+              toast('임장 예정 일시를 입력하고 저장하세요.');
+              planInput.closest('.field').classList.add('missing');
+              planInput.scrollIntoView({ block: 'center' });
+              planInput.focus();
+            } else toast('상태: ' + next);
           }).catch(handleError);
         });
       });
