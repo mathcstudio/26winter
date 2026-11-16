@@ -4,6 +4,8 @@
   var STATUSES = ['관심', '임장예정', '임장완료', '보류', '탈락', '계약'];
   var TRADE_TYPES = ['전세', '월세', '매매', '단기임대'];
   var LEVELS = ['좋음', '보통', '나쁨'];
+  // 설정에서 바꾸기 전의 기본 지역 목록
+  var DEFAULT_REGIONS = ['죽전', '구성', '기흥', '상갈', '신갈'];
   var STARS = [['1', '1★'], ['2', '2★'], ['3', '3★'], ['4', '4★'], ['5', '5★']];
   // 임장 체크리스트 (아파트 기준). 키는 시트의 '임장' 열과 맞습니다.
   var VISIT_GROUPS = [
@@ -23,6 +25,7 @@
     { title: '기본 정보', prefix: 'l', fields: [
       ['name', '단지·건물명', { full: 1, locked: 1 }],
       ['dongHo', '동/호', { locked: 1 }],
+      ['region', '지역', { locked: 1, region: 1 }],
       ['status', '상태', { options: STATUSES, newOnly: 1, locked: 1 }],
       ['visitPlan', '임장 예정 일시', { type: 'datetime-local', existingOnly: 1 }],
       ['address', '주소', { full: 1 }],
@@ -58,11 +61,39 @@
   var DEMO = !window.CONFIG || !window.CONFIG.API_URL;
 
   var app = document.getElementById('app');
-  var state = { session: loadSession(), listings: [], agents: [], visits: [], settings: { hidden: [] }, loaded: false, filter: '전체', sort: 'recent' };
+  var state = { session: loadSession(), listings: [], agents: [], visits: [], settings: { hidden: [], regions: DEFAULT_REGIONS.slice() }, loaded: false, filter: '전체', sort: 'recent' };
 
   /** 설정에서 숨기지 않은 항목인지. key 예: 'l.loan', 'a.rep', 'v.noise' */
   function isShown(key) {
     return state.settings.hidden.indexOf(key) < 0;
+  }
+
+  /** 서버에서 받은 설정을 화면용으로 정리. 지역 목록이 없으면(이전 버전 서버) 기본값 */
+  function normalizeSettings(s) {
+    s = s || {};
+    return {
+      hidden: Array.isArray(s.hidden) ? s.hidden : [],
+      regions: Array.isArray(s.regions) ? s.regions : DEFAULT_REGIONS.slice()
+    };
+  }
+
+  /** 주소·단지명·매물특징에서 지역명을 찾습니다. '기흥구'처럼 구 이름으로 쓰인 곳은 건너뜁니다. */
+  function detectRegion(l) {
+    var texts = [l.address, l.name, l.features];
+    for (var i = 0; i < texts.length; i++) {
+      var text = String(texts[i] || '');
+      for (var j = 0; j < state.settings.regions.length; j++) {
+        var r = state.settings.regions[j];
+        var re = new RegExp(r.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!구)');
+        if (re.test(text)) return r;
+      }
+    }
+    return '';
+  }
+
+  /** 매물의 지역. 직접 고른 값이 없으면 주소에서 추정 */
+  function regionOf(l) {
+    return l.region || detectRegion(l);
   }
 
   /* ---------- 공통 ---------- */
@@ -188,7 +219,8 @@
   function demoApi(req) {
     var db;
     try { db = JSON.parse(localStorage.getItem(DEMO_KEY) || 'null'); } catch (e) {}
-    db = Object.assign({ listings: [], agents: [], visits: [], settings: { hidden: [] } }, db || {});
+    db = Object.assign({ listings: [], agents: [], visits: [], settings: { hidden: [], regions: DEFAULT_REGIONS.slice() } }, db || {});
+    if (!Array.isArray(db.settings.regions)) db.settings.regions = DEFAULT_REGIONS.slice();
     var now = nowLocal().replace('T', ' ');
     var newId = function (p) { return p + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36); };
     var result = true;
@@ -250,7 +282,7 @@
     }
 
     if (req.action === 'saveSettings') {
-      db.settings = { hidden: (req.settings || {}).hidden || [] };
+      db.settings = { hidden: (req.settings || {}).hidden || [], regions: (req.settings || {}).regions || [] };
       result = db.settings;
     }
 
@@ -268,7 +300,7 @@
       state.listings = data.listings || [];
       state.agents = data.agents || [];
       state.visits = data.visits || [];
-      state.settings = { hidden: (data.settings && data.settings.hidden) || [] };
+      state.settings = normalizeSettings(data.settings);
       state.loaded = true;
     });
   }
@@ -282,7 +314,7 @@
     var control;
     if (opts.options) {
       control = '<select name="' + name + '">' + opts.options.map(function (o) {
-        return '<option' + (String(value) === o ? ' selected' : '') + '>' + esc(o) + '</option>';
+        return '<option value="' + esc(o) + '"' + (String(value) === o ? ' selected' : '') + '>' + esc(o || '미지정') + '</option>';
       }).join('') + '</select>';
     } else if (opts.area) {
       control = '<textarea name="' + name + '" rows="' + opts.area + '">' + esc(value) + '</textarea>';
@@ -433,7 +465,7 @@
     }).join('');
 
     var list = sortedListings();
-    var cards = list.map(function (l) {
+    var cardHtml = function (l) {
       var agent = agentOf(l);
       var visits = visitsOf(l.id);
       var status = l.status || '관심';
@@ -460,6 +492,17 @@
         (l.features ? '<div class="meta">' + esc(l.features) + '</div>' : '') +
         (foot ? '<div class="meta">' + esc(foot) + '</div>' : '') +
         '</a>';
+    };
+
+    // 같은 지역끼리 묶기: 설정의 지역 순서 → 목록에 없는 지역 → 미지정
+    var byRegion = {};
+    list.forEach(function (l) { var r = regionOf(l); (byRegion[r] = byRegion[r] || []).push(l); });
+    var others = Object.keys(byRegion).filter(function (r) { return r && state.settings.regions.indexOf(r) < 0; }).sort();
+    var order = state.settings.regions.concat(others, ['']).filter(function (r) { return byRegion[r]; });
+    var showHeads = order.length > 1 || (order.length === 1 && order[0] !== '');
+    var cards = order.map(function (r) {
+      return (showHeads ? '<h2 class="group">' + esc(r || '지역 미지정') + ' <span>' + byRegion[r].length + '</span></h2>' : '') +
+        byRegion[r].map(cardHtml).join('');
     }).join('');
 
     var sortOptions = [['recent', '최근 등록순'], ['cheap', '보증금 낮은순'], ['pricey', '보증금 높은순'], ['wide', '면적 넓은순'], ['rating', '별점 높은순'], ['plan', '임장 예정 빠른순']]
@@ -490,7 +533,16 @@
         if (o.existingOnly && isNew) return false;
         if (o.newOnly && !isNew) return false;
         return o.locked || isShown(g.prefix + '.' + f[0]);
-      }).map(function (f) { return field(g.prefix, obj, f[0], f[1], f[2]); }).join('');
+      }).map(function (f) {
+        var o = f[2];
+        if (o && o.region) {
+          // 설정에서 지운 지역이 이미 들어 있는 매물은 그 값을 잃지 않도록 선택지에 남김
+          var opts = [''].concat(state.settings.regions);
+          if (obj.region && opts.indexOf(obj.region) < 0) opts.push(obj.region);
+          o = Object.assign({}, o, { options: opts });
+        }
+        return field(g.prefix, obj, f[0], f[1], o);
+      }).join('');
       if (!html) return '';
       var link = g.prefix === 'a' && a.id ? '<a class="hint" href="#agent/' + esc(a.id) + '">중개사 메모 보기 →</a>' : '';
       return '<div class="card"><h2>' + g.title + '</h2><div class="grid">' + html + '</div>' + link + '</div>';
@@ -510,6 +562,7 @@
     if (id && !existing) { location.hash = ''; return; }
     var listing = existing ? Object.assign({}, existing) : { status: '관심', tradeType: '전세' };
     var agent = existing ? Object.assign({}, agentOf(existing) || {}) : {};
+    if (!listing.region) listing.region = detectRegion(listing);
     var rawText = listing.rawText || '';
     var stash = { l: {}, a: {} };
     var visits = existing ? visitsOf(existing.id) : [];
@@ -559,6 +612,11 @@
           filled++;
         });
       });
+      var guessed = detectRegion(parsed.listing);
+      if (guessed) {
+        form.elements['l.region'].value = guessed;
+        form.elements['l.region'].closest('.field').classList.add('filled');
+      }
       ['l.name', 'l.deposit'].forEach(function (name) {
         if (!form.elements[name].value) form.elements[name].closest('.field').classList.add('missing');
       });
@@ -587,8 +645,11 @@
       if (existing) data.l.id = existing.id;
       var btn = form.querySelector('button[type=submit]');
       btn.disabled = true;
-      api('saveListing', { listing: data.l, agent: data.a }).then(loadData).then(function () {
-        toast('저장했습니다.');
+      api('saveListing', { listing: data.l, agent: data.a }).then(function (res) {
+        var lost = data.l.region && res && res.listing && res.listing.region !== data.l.region;
+        return loadData().then(function () { return lost; });
+      }).then(function (lost) {
+        toast(lost ? '저장했지만 지역은 서버에 남지 않았습니다. Code.gs를 새 버전으로 바꿔 주세요.' : '저장했습니다.');
         location.hash = '';
       }).catch(function (err) { btn.disabled = false; handleError(err); });
     });
@@ -771,6 +832,14 @@
       '<div class="card"><h2>입력 항목</h2>' +
       '<p class="hint" style="margin:0 0 12px">매물과 임장 기록에서 쓸 항목만 골라 화면을 줄일 수 있습니다. 지금 ' + state.settings.hidden.length + '개를 숨기고 있습니다.</p>' +
       '<a class="btn" href="#fields" style="text-decoration:none">입력 항목 선택</a></div>' +
+      '<form class="card" id="regions"><h2>지역</h2>' +
+      '<p class="hint" style="margin:0 0 12px">목록에서 매물을 이 순서대로 지역별로 묶어 보여줍니다. 지역명을 누르면 지워집니다. 주소에 지역명이 있으면 자동으로 골라집니다.</p>' +
+      '<div class="chips wrap" id="region-chips">' +
+      (state.settings.regions.map(function (r) {
+        return '<button type="button" class="chip" data-region="' + esc(r) + '" aria-label="' + esc(r) + ' 지우기">' + esc(r) + ' ✕</button>';
+      }).join('') || '<span class="hint">지역이 없습니다.</span>') + '</div>' +
+      '<div class="addrow"><input type="text" name="region" maxlength="20" placeholder="추가할 지역명" aria-label="추가할 지역명">' +
+      '<button class="btn primary" type="submit">추가</button></div></form>' +
       '<div class="card"><h2>이 기기</h2>' +
       '<button class="btn" id="logout">잠그기 (비밀번호 다시 입력)</button></div>' +
       '<form class="card" id="pw"><h2>비밀번호 변경</h2>' +
@@ -781,6 +850,31 @@
       '<button class="btn primary" type="submit"' + (DEMO ? ' disabled' : '') + '>변경</button></form>';
 
     document.getElementById('logout').addEventListener('click', logout);
+
+    function saveRegions(regions, msg) {
+      api('saveSettings', { settings: { hidden: state.settings.hidden, regions: regions } }).then(function (saved) {
+        var kept = saved && Array.isArray(saved.regions);
+        state.settings.regions = kept ? saved.regions : regions;
+        toast(kept ? msg : '지역 목록이 서버에 남지 않았습니다. Code.gs를 새 버전으로 바꿔 주세요.');
+        renderSettings();
+      }).catch(handleError);
+    }
+    var regionForm = document.getElementById('regions');
+    regionForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var name = regionForm.region.value.trim();
+      if (!name) return;
+      if (state.settings.regions.indexOf(name) >= 0) { toast('이미 있는 지역입니다.'); return; }
+      saveRegions(state.settings.regions.concat([name]), name + ' 지역을 추가했습니다.');
+    });
+    regionForm.querySelectorAll('[data-region]').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        var name = chip.dataset.region;
+        var used = state.listings.filter(function (l) { return l.region === name; }).length;
+        if (!confirm(name + ' 지역을 목록에서 지울까요?' + (used ? ' 이 지역으로 저장된 매물 ' + used + '건은 그대로 남습니다.' : ''))) return;
+        saveRegions(state.settings.regions.filter(function (r) { return r !== name; }), name + ' 지역을 지웠습니다.');
+      });
+    });
     var form = document.getElementById('pw');
     form.addEventListener('submit', function (e) {
       e.preventDefault();
@@ -822,7 +916,7 @@
       '<div class="actions"><button class="btn" type="button" id="only-essential">핵심만 남기기</button>' +
       '<button class="btn" type="button" id="all-on">모두 켜기</button></div></div>' +
       '<div class="card"><h2>매물 정보</h2>' +
-      '<p class="hint" style="margin:0">단지·건물명, 동/호, 보증금, 상태는 항상 나옵니다. 숨긴 항목도 네이버 내용을 붙여넣으면 인식된 값은 시트에 저장됩니다.</p>' +
+      '<p class="hint" style="margin:0">단지·건물명, 동/호, 지역, 보증금, 상태는 항상 나옵니다. 숨긴 항목도 네이버 내용을 붙여넣으면 인식된 값은 시트에 저장됩니다.</p>' +
       listingHtml + '</div>' +
       '<div class="card"><h2>임장 기록</h2>' +
       '<p class="hint" style="margin:0">방문 일시와 총점은 항상 나옵니다.</p>' +
@@ -844,8 +938,8 @@
       boxes.forEach(function (b) { if (!b.checked) hidden.push(b.name); });
       var btn = form.querySelector('button[type=submit]');
       btn.disabled = true;
-      api('saveSettings', { settings: { hidden: hidden } }).then(function (saved) {
-        state.settings = { hidden: (saved && saved.hidden) || hidden };
+      api('saveSettings', { settings: { hidden: hidden, regions: state.settings.regions } }).then(function (saved) {
+        state.settings.hidden = (saved && saved.hidden) || hidden;
         toast('입력 항목을 저장했습니다.');
         location.hash = 'settings';
       }).catch(function (err) { btn.disabled = false; handleError(err); });
