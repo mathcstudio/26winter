@@ -529,16 +529,10 @@
         var bad = badItems(visits);
         visitLine = ['임장 ' + visits.length + '회', stars(avgRating(visits)), bad.length ? '주의: ' + bad.join(', ') : ''].filter(Boolean).join(' · ');
       }
-      var planLine = '';
-      if (status === '임장예정') {
-        var pi = planInfo(l.visitPlan);
-        planLine = '<div class="plan p-' + pi.level + '"><b>임장 ' + esc(pi.text) + '</b>' + (pi.when ? ' ' + esc(pi.when) : ' · 날짜를 정하세요') + '</div>';
-      }
       var foot = [agent && agent.name, l.author, l.createdAt && String(l.createdAt).slice(5, 10)].filter(Boolean).join(' · ');
-      return '<a class="card item' + (planLine ? ' planned' : '') + '" href="#edit/' + esc(l.id) + '">' +
+      return '<a class="card item" href="#edit/' + esc(l.id) + '">' +
         '<div class="row"><span class="name">' + esc(titleOf(l)) + '</span>' +
         '<span class="badge s-' + esc(status) + '">' + esc(status) + '</span></div>' +
-        planLine +
         '<div class="price">' + esc(priceText(l)) + '</div>' +
         (spec ? '<div class="meta">' + esc(spec) + '</div>' : '') +
         (visitLine ? '<div class="meta visit">' + esc(visitLine) + '</div>' : '') +
@@ -558,26 +552,16 @@
         byRegion[r].map(cardHtml).join('');
     }).join('');
 
-    // 임장 예정: 필터와 상관없이 맨 위에 항상 보여줍니다.
-    var planned = plannedListings();
-    var agenda = !planned.length ? '' :
-      '<div class="card agenda"><h2>임장 예정 ' + planned.length + '건</h2>' + planned.map(function (l) {
-        var pi = planInfo(l.visitPlan);
-        var ag = agentOf(l);
-        return '<a class="agendarow p-' + pi.level + '" href="#edit/' + esc(l.id) + '">' +
-          '<span class="when"><b>' + esc(pi.text) + '</b>' + (pi.when ? '<small>' + esc(pi.when) + '</small>' : '<small>날짜를 정하세요</small>') + '</span>' +
-          '<span class="what"><b>' + esc(titleOf(l)) + '</b><small>' +
-          esc([regionOf(l), priceText(l), ag && ag.name].filter(Boolean).join(' · ')) + '</small></span></a>';
-      }).join('') + '</div>';
+    var plannedCount = plannedListings().length;
 
     var sortOptions = [['recent', '최근 등록순'], ['cheap', '보증금 낮은순'], ['pricey', '보증금 높은순'], ['wide', '면적 넓은순'], ['rating', '별점 높은순'], ['plan', '임장 예정 빠른순']]
       .map(function (o) { return '<option value="' + o[0] + '"' + (state.sort === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
 
     app.innerHTML =
       '<div class="topbar"><h1>전세 임장 노트</h1>' +
-      '<a class="btn" href="#settings">설정</a><a class="btn" href="#agents">중개사</a><a class="btn primary" href="#new">+ 매물</a></div>' +
+      '<a class="btn" href="#plans">임장' + (plannedCount ? ' ' + plannedCount : '') + '</a><a class="btn" href="#settings">설정</a><a class="btn" href="#agents">중개사</a><a class="btn primary" href="#new">+ 매물</a></div>' +
       (DEMO ? '<div class="banner">체험 모드: 이 브라우저에만 저장됩니다.</div>' : '') +
-      agenda + regionChips + '<div class="chips">' + chips + '</div>' +
+      regionChips + '<div class="chips">' + chips + '</div>' +
       '<div class="toolbar"><span>' + list.length + '건</span><select id="sort" aria-label="정렬">' + sortOptions + '</select></div>' +
       (cards || '<div class="empty">' + (state.listings.length ? '조건에 맞는 매물이 없습니다.' : '아직 매물이 없습니다.<br>[+ 매물]을 눌러 네이버 부동산 내용을 붙여넣어 보세요.') + '</div>');
 
@@ -588,6 +572,22 @@
       el.addEventListener('click', function () { state.region = el.dataset.region; renderList(); });
     });
     document.getElementById('sort').addEventListener('change', function (e) { state.sort = e.target.value; renderList(); });
+  }
+
+  /* ---------- 화면: 임장 예정 ---------- */
+
+  function renderPlans() {
+    var rows = plannedListings().map(function (l) {
+      var pi = planInfo(l.visitPlan);
+      var ag = agentOf(l);
+      return '<a class="card agendarow p-' + pi.level + '" href="#edit/' + esc(l.id) + '">' +
+        '<span class="when"><b>' + esc(pi.text) + '</b><small>' + esc(pi.when || '날짜를 정하세요') + '</small></span>' +
+        '<span class="what"><b>' + esc(titleOf(l)) + '</b><small>' +
+        esc([regionOf(l), priceText(l), ag && ag.name].filter(Boolean).join(' · ')) + '</small></span></a>';
+    }).join('');
+    app.innerHTML =
+      '<div class="topbar"><a class="btn" href="#">← 목록</a><h1>임장 예정</h1></div>' +
+      (rows || '<div class="empty">예정된 임장이 없습니다.<br>매물의 상태를 [임장예정]으로 바꾸고 일시를 입력하면 여기에 모입니다.</div>');
   }
 
   /* ---------- 화면: 매물 추가·상세 ---------- */
@@ -1037,6 +1037,7 @@
     if (parts[0] === 'new') renderListingForm(null);
     else if (parts[0] === 'edit') renderListingForm(parts[1]);
     else if (parts[0] === 'visit') renderVisitForm(parts[1], parts[2]);
+    else if (parts[0] === 'plans') renderPlans();
     else if (parts[0] === 'agents') renderAgents();
     else if (parts[0] === 'agent') renderAgentForm(parts[1]);
     else if (parts[0] === 'settings') renderSettings();
