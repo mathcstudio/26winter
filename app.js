@@ -464,16 +464,16 @@
   }
 
   function renderList() {
-    // 지역 필터: 매물이 있는 지역만 설정 순서대로 보여줍니다.
+    // 지역 필터: 설정의 지역은 매물이 없어도 항상 보여줍니다.
     var regionCounts = {};
     state.listings.forEach(function (l) { var r = regionOf(l); regionCounts[r] = (regionCounts[r] || 0) + 1; });
-    if (state.region !== '전체' && !regionCounts[state.region]) state.region = '전체';
     var regionKeys = state.settings.regions.concat(
       Object.keys(regionCounts).filter(function (r) { return r && state.settings.regions.indexOf(r) < 0; }).sort(), ['']
-    ).filter(function (r) { return regionCounts[r]; });
-    var regionChips = regionKeys.length < 2 && regionKeys[0] === '' || !regionKeys.length ? '' :
+    ).filter(function (r) { return regionCounts[r] || state.settings.regions.indexOf(r) >= 0; });
+    if (state.region !== '전체' && regionKeys.indexOf(state.region) < 0) state.region = '전체';
+    var regionChips = !regionKeys.length ? '' :
       '<div class="chips" aria-label="지역">' + [['전체', '전체 지역', state.listings.length]].concat(regionKeys.map(function (r) {
-        return [r, r || '미지정', regionCounts[r]];
+        return [r, r || '미지정', regionCounts[r] || 0];
       })).map(function (c) {
         return '<button class="chip' + (state.region === c[0] ? ' on' : '') + '" data-region="' + esc(c[0]) + '">' + esc(c[1]) + ' ' + c[2] + '</button>';
       }).join('') + '</div>';
