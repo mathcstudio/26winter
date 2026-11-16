@@ -61,7 +61,7 @@
   var DEMO = !window.CONFIG || !window.CONFIG.API_URL;
 
   var app = document.getElementById('app');
-  var state = { session: loadSession(), listings: [], agents: [], visits: [], settings: { hidden: [], regions: DEFAULT_REGIONS.slice() }, loaded: false, filter: '전체', sort: 'recent' };
+  var state = { session: loadSession(), listings: [], agents: [], visits: [], settings: { hidden: [], regions: DEFAULT_REGIONS.slice() }, loaded: false, filter: '전체', region: '전체', sort: 'recent' };
 
   /** 설정에서 숨기지 않은 항목인지. key 예: 'l.loan', 'a.rep', 'v.noise' */
   function isShown(key) {
@@ -440,8 +440,15 @@
 
   /* ---------- 화면: 매물 목록 ---------- */
 
+  /** 상단 지역 필터에 맞는 매물. '' 는 지역 미지정 */
+  function inRegion() {
+    return state.listings.filter(function (l) {
+      return state.region === '전체' || regionOf(l) === state.region;
+    });
+  }
+
   function sortedListings() {
-    var list = state.listings.filter(function (l) {
+    var list = inRegion().filter(function (l) {
       return state.filter === '전체' || (l.status || '관심') === state.filter;
     });
     var num = function (v) { return Number(v) || 0; };
@@ -457,10 +464,25 @@
   }
 
   function renderList() {
+    // 지역 필터: 매물이 있는 지역만 설정 순서대로 보여줍니다.
+    var regionCounts = {};
+    state.listings.forEach(function (l) { var r = regionOf(l); regionCounts[r] = (regionCounts[r] || 0) + 1; });
+    if (state.region !== '전체' && !regionCounts[state.region]) state.region = '전체';
+    var regionKeys = state.settings.regions.concat(
+      Object.keys(regionCounts).filter(function (r) { return r && state.settings.regions.indexOf(r) < 0; }).sort(), ['']
+    ).filter(function (r) { return regionCounts[r]; });
+    var regionChips = regionKeys.length < 2 && regionKeys[0] === '' || !regionKeys.length ? '' :
+      '<div class="chips" aria-label="지역">' + [['전체', '전체 지역', state.listings.length]].concat(regionKeys.map(function (r) {
+        return [r, r || '미지정', regionCounts[r]];
+      })).map(function (c) {
+        return '<button class="chip' + (state.region === c[0] ? ' on' : '') + '" data-region="' + esc(c[0]) + '">' + esc(c[1]) + ' ' + c[2] + '</button>';
+      }).join('') + '</div>';
+
+    var scoped = inRegion();
     var counts = {};
-    state.listings.forEach(function (l) { var s = l.status || '관심'; counts[s] = (counts[s] || 0) + 1; });
+    scoped.forEach(function (l) { var s = l.status || '관심'; counts[s] = (counts[s] || 0) + 1; });
     var chips = ['전체'].concat(STATUSES).map(function (s) {
-      var n = s === '전체' ? state.listings.length : (counts[s] || 0);
+      var n = s === '전체' ? scoped.length : (counts[s] || 0);
       return '<button class="chip' + (state.filter === s ? ' on' : '') + '" data-filter="' + s + '">' + s + ' ' + n + '</button>';
     }).join('');
 
@@ -499,7 +521,7 @@
     list.forEach(function (l) { var r = regionOf(l); (byRegion[r] = byRegion[r] || []).push(l); });
     var others = Object.keys(byRegion).filter(function (r) { return r && state.settings.regions.indexOf(r) < 0; }).sort();
     var order = state.settings.regions.concat(others, ['']).filter(function (r) { return byRegion[r]; });
-    var showHeads = order.length > 1 || (order.length === 1 && order[0] !== '');
+    var showHeads = state.region === '전체' && (order.length > 1 || (order.length === 1 && order[0] !== ''));
     var cards = order.map(function (r) {
       return (showHeads ? '<h2 class="group">' + esc(r || '지역 미지정') + ' <span>' + byRegion[r].length + '</span></h2>' : '') +
         byRegion[r].map(cardHtml).join('');
@@ -512,12 +534,15 @@
       '<div class="topbar"><h1>전세 임장 노트</h1>' +
       '<a class="btn" href="#settings">설정</a><a class="btn" href="#agents">중개사</a><a class="btn primary" href="#new">+ 매물</a></div>' +
       (DEMO ? '<div class="banner">체험 모드: 이 브라우저에만 저장됩니다.</div>' : '') +
-      '<div class="chips">' + chips + '</div>' +
+      regionChips + '<div class="chips">' + chips + '</div>' +
       '<div class="toolbar"><span>' + list.length + '건</span><select id="sort" aria-label="정렬">' + sortOptions + '</select></div>' +
-      (cards || '<div class="empty">' + (state.listings.length ? '이 상태의 매물이 없습니다.' : '아직 매물이 없습니다.<br>[+ 매물]을 눌러 네이버 부동산 내용을 붙여넣어 보세요.') + '</div>');
+      (cards || '<div class="empty">' + (state.listings.length ? '조건에 맞는 매물이 없습니다.' : '아직 매물이 없습니다.<br>[+ 매물]을 눌러 네이버 부동산 내용을 붙여넣어 보세요.') + '</div>');
 
     app.querySelectorAll('[data-filter]').forEach(function (el) {
       el.addEventListener('click', function () { state.filter = el.dataset.filter; renderList(); });
+    });
+    app.querySelectorAll('.chips [data-region]').forEach(function (el) {
+      el.addEventListener('click', function () { state.region = el.dataset.region; renderList(); });
     });
     document.getElementById('sort').addEventListener('change', function (e) { state.sort = e.target.value; renderList(); });
   }
